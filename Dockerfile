@@ -1,7 +1,9 @@
 FROM node:18-slim
 
-# Install GCC compiler
-RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
+# Install all compilers: GCC (C), G++ (C++), JDK 17 (Java), Python 3
+RUN apt-get update && \
+    apt-get install -y gcc g++ default-jdk python3 && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
