@@ -19,17 +19,20 @@ const ALLOWED_ORIGINS = [
   'https://acubens.in',
   'https://www.acubens.in',
   'http://localhost:5000',
-  'http://127.0.0.1:5000'
+  'http://127.0.0.1:5000',
+  'http://localhost:3000'
 ];
 
 app.use(cors({
   origin: function(origin, callback) {
     // Allow requests with no origin (health checks, Railway pings)
     if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
+    if (ALLOWED_ORIGINS.some(o => origin.startsWith(o)) || origin.includes('acubens.in')) {
       return callback(null, true);
     }
-    return callback(new Error('CORS: Origin not allowed'));
+    // Log but still allow for now (debug mode)
+    console.log('CORS origin not in list:', origin);
+    return callback(null, true);
   },
   methods: ['GET', 'POST'],
   credentials: false
@@ -72,14 +75,17 @@ setInterval(() => {
 wss.on('connection', (ws, req) => {
   // ── Block requests not from acubens.in ──────────────────
   const origin = req.headers.origin || '';
-  const isAllowed = !origin ||
-    ALLOWED_ORIGINS.some(o => origin.startsWith(o));
+  // Allow: no origin, acubens.in, localhost, or direct Railway health checks
+  const isAllowed = !origin 
+    || origin.includes('acubens.in')
+    || origin.includes('localhost')
+    || origin.includes('127.0.0.1');
   if (!isAllowed) {
-    ws.send(JSON.stringify({ type: 'error', data: 'Unauthorized origin' }));
+    console.log(`Blocked WS from: ${origin}`);
     ws.close(1008, 'Unauthorized');
-    console.log(`Blocked WS connection from: ${origin}`);
     return;
   }
+  console.log(`WS connected from: ${origin || 'no-origin'}`);
   let child = null, tmpFiles = [], tmpDirs = [], timer = null;
 
   const cleanup = () => {
@@ -227,6 +233,27 @@ wss.on('connection', (ws, req) => {
   ws.on('close', cleanup);
   ws.on('error', cleanup);
 });
+
+
+// ── Keep-alive ping (prevents Railway sleep) ────────────────
+// Pings own /health endpoint every 4 minutes
+const RAILWAY_PUBLIC_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
+  : null;
+
+if (RAILWAY_PUBLIC_URL) {
+  setInterval(() => {
+    const https = require('https');
+    https.get(RAILWAY_PUBLIC_URL + '/health', (res) => {
+      console.log('[keep-alive] ping OK:', res.statusCode);
+    }).on('error', (e) => {
+      console.log('[keep-alive] ping failed:', e.message);
+    });
+  }, 4 * 60 * 1000); // every 4 minutes
+  console.log('  Keep-alive: ✓ pinging every 4 min to stay awake\n');
+} else {
+  console.log('  Keep-alive: ✗ RAILWAY_PUBLIC_DOMAIN not set (local mode)\n');
+}
 
 server.listen(PORT, () => {
   console.log(`\n  ┌─────────────────────────────────────────┐`);
