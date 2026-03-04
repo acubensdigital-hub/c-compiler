@@ -14,26 +14,7 @@ const wss    = new WebSocket.Server({ server });
 const PORT   = process.env.PORT || 5000;
 const isWin  = os.platform() === 'win32';
 
-// ── Allowed origins (only acubens.in can use this backend) ──
-const ALLOWED_ORIGINS = [
-  'https://acubens.in',
-  'https://www.acubens.in',
-  'http://localhost:5000',
-  'http://127.0.0.1:5000'
-];
-
-app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (health checks, Railway pings)
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-      return callback(null, true);
-    }
-    return callback(new Error('CORS: Origin not allowed'));
-  },
-  methods: ['GET', 'POST'],
-  credentials: false
-}));
+app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname)));
 
@@ -46,40 +27,7 @@ const wsSend = (ws, obj) => {
 
 const escRe = (s) => s.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 
-
-// ── Simple IP rate limiter (max 30 runs/min per IP) ─────
-const rateLimitMap = new Map();
-function isRateLimited(ip) {
-  const now = Date.now();
-  const windowMs = 60 * 1000; // 1 minute
-  const max = 30;
-  if (!rateLimitMap.has(ip)) rateLimitMap.set(ip, []);
-  const timestamps = rateLimitMap.get(ip).filter(t => now - t < windowMs);
-  timestamps.push(now);
-  rateLimitMap.set(ip, timestamps);
-  return timestamps.length > max;
-}
-// Clean up old entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, times] of rateLimitMap.entries()) {
-    const fresh = times.filter(t => now - t < 60000);
-    if (fresh.length === 0) rateLimitMap.delete(ip);
-    else rateLimitMap.set(ip, fresh);
-  }
-}, 5 * 60 * 1000);
-
-wss.on('connection', (ws, req) => {
-  // ── Block requests not from acubens.in ──────────────────
-  const origin = req.headers.origin || '';
-  const isAllowed = !origin ||
-    ALLOWED_ORIGINS.some(o => origin.startsWith(o));
-  if (!isAllowed) {
-    ws.send(JSON.stringify({ type: 'error', data: 'Unauthorized origin' }));
-    ws.close(1008, 'Unauthorized');
-    console.log(`Blocked WS connection from: ${origin}`);
-    return;
-  }
+wss.on('connection', (ws) => {
   let child = null, tmpFiles = [], tmpDirs = [], timer = null;
 
   const cleanup = () => {
@@ -122,13 +70,7 @@ wss.on('connection', (ws, req) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
 
     // ── RUN ──────────────────────────────────────────────────────────
-    // ── Rate limit check ──────────────────────────────────
     if (msg.type === 'run') {
-      const ip = req.socket.remoteAddress || 'unknown';
-      if (isRateLimited(ip)) {
-        wsSend(ws, { type: 'error', data: '⚠ Rate limit exceeded. Please wait 1 minute.' });
-        return;
-      }
       cleanup();
       const lang = msg.lang || 'c';
       const id   = crypto.randomBytes(6).toString('hex');
